@@ -1,6 +1,6 @@
 # Open Asset Import Library (assimp)
 # ----------------------------------------------------------------------
-# Copyright (c) 2006-2018, assimp team
+# Copyright (c) 2006-2019, assimp team
 
 # All rights reserved.
 #
@@ -39,10 +39,12 @@ CMAKE_MINIMUM_REQUIRED( VERSION 2.8 )
 PROJECT( Assimp )
 
 # All supported options ###############################################
+
 OPTION( BUILD_SHARED_LIBS
   "Build package with shared libraries."
   ON
 )
+
 OPTION( BUILD_FRAMEWORK
   "Build package as Mac OS X Framework bundle."
   OFF
@@ -103,11 +105,28 @@ OPTION ( BUILD_DOCS
   "Build documentation using Doxygen."
   OFF
 )
+OPTION( INJECT_DEBUG_POSTFIX
+  "Inject debug postfix in .a/.so lib names"
+  ON
+)
+
+OPTION ( IGNORE_GIT_HASH
+   "Don't call git to get the hash."
+   OFF
+)
+
+IF (IOS)
+  IF (NOT CMAKE_BUILD_TYPE)
+    SET(CMAKE_BUILD_TYPE "Release")
+  ENDIF (NOT CMAKE_BUILD_TYPE)
+  ADD_DEFINITIONS(-DENABLE_BITCODE)
+ENDIF (IOS)
 
 # Use subset of Windows.h
 if (WIN32)
   ADD_DEFINITIONS( -DWIN32_LEAN_AND_MEAN )
 endif()
+
 
 IF(MSVC)
   OPTION( ASSIMP_INSTALL_PDB
@@ -138,26 +157,28 @@ SET (PROJECT_VERSION "${ASSIMP_VERSION}")
 
 SET( ASSIMP_PACKAGE_VERSION "0" CACHE STRING "the package-specific version used for uploading the sources" )
 
-# Enable C++1 globally
+# Enable C++11 support globally
 set_property( GLOBAL PROPERTY CXX_STANDARD 11 )
 
-# Get the current working branch
-EXECUTE_PROCESS(
-  COMMAND git rev-parse --abbrev-ref HEAD
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  OUTPUT_VARIABLE GIT_BRANCH
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-  ERROR_QUIET
-)
+IF(NOT IGNORE_GIT_HASH)
+  # Get the current working branch
+  EXECUTE_PROCESS(
+    COMMAND git rev-parse --abbrev-ref HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_BRANCH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
 
-# Get the latest abbreviated commit hash of the working branch
-EXECUTE_PROCESS(
-  COMMAND git log -1 --format=%h --no-show-signature
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  OUTPUT_VARIABLE GIT_COMMIT_HASH
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-  ERROR_QUIET
-)
+  # Get the latest abbreviated commit hash of the working branch
+  EXECUTE_PROCESS(
+    COMMAND git rev-parse --short=8 HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+ENDIF()
 
 IF(NOT GIT_COMMIT_HASH)
   SET(GIT_COMMIT_HASH 0)
@@ -177,7 +198,7 @@ CONFIGURE_FILE(
   ${CMAKE_CURRENT_BINARY_DIR}/include/assimp/config.h
 )
 
-INCLUDE_DIRECTORIES(
+INCLUDE_DIRECTORIES( BEFORE
   ./
   include
   ${CMAKE_CURRENT_BINARY_DIR}
@@ -198,32 +219,37 @@ ENDIF( UNIX )
 # Grouped compiler settings
 IF ((CMAKE_C_COMPILER_ID MATCHES "GNU") AND NOT CMAKE_COMPILER_IS_MINGW)
   # hide all not-exported symbols
-  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fvisibility=hidden -fPIC -Wall -std=c++0x")
-  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
+  SET(CMAKE_CXX_FLAGS "-g -fvisibility=hidden -fPIC -fno-strict-aliasing -Wall -std=c++0x ${CMAKE_CXX_FLAGS}")
+  SET(CMAKE_C_FLAGS "-fPIC -fno-strict-aliasing ${CMAKE_C_FLAGS}")
   SET(LIBSTDC++_LIBRARIES -lstdc++)
 ELSEIF(MSVC)
   # enable multi-core compilation with MSVC
   ADD_COMPILE_OPTIONS(/MP)
-  IF("${CMAKE_GENERATOR}" MATCHES "(Win64|IA64)")
-    ADD_COMPILE_OPTIONS( /bigobj )
-  ENDIF()
+  ADD_COMPILE_OPTIONS( /bigobj )
   # disable "elements of array '' will be default initialized" warning on MSVC2013
   IF(MSVC12)
     ADD_COMPILE_OPTIONS(/wd4351)
   ENDIF()
 ELSEIF ( "${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" )
-  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fvisibility=hidden -fPIC -Wall -Wno-long-long -std=c++11" )
-  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
+  SET(CMAKE_CXX_FLAGS "-g -fvisibility=hidden -fPIC -fno-strict-aliasing -Wall -Wno-long-long -std=c++11 ${CMAKE_CXX_FLAGS}" )
+  SET(CMAKE_C_FLAGS "-fPIC -fno-strict-aliasing ${CMAKE_C_FLAGS}")
 ELSEIF( CMAKE_COMPILER_IS_MINGW )
-  SET( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility=hidden -Wall -Wno-long-long -std=c++11" )
-  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
+  SET( CMAKE_CXX_FLAGS "-fvisibility=hidden -fno-strict-aliasing -Wall -Wno-long-long -std=c++11 -Wa,-mbig-obj ${CMAKE_CXX_FLAGS}" )
+  SET(CMAKE_C_FLAGS "-fPIC -fno-strict-aliasing ${CMAKE_C_FLAGS} ")
   ADD_DEFINITIONS( -U__STRICT_ANSI__ )
 ENDIF()
 
-IF (IOS)
-  SET(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -fembed-bitcode -O3")
+IF ( IOS )
+
+IF (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fembed-bitcode -Og")
+  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fembed-bitcode -Og")
+ELSE()
+  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fembed-bitcode -O3")
   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fembed-bitcode -O3")
 ENDIF()
+
+ENDIF( IOS )
 
 IF (ASSIMP_COVERALLS)
   MESSAGE(STATUS "Coveralls enabled")
@@ -290,8 +316,18 @@ ENDIF()
 
 # cmake configuration files
 CONFIGURE_FILE("${CMAKE_CURRENT_SOURCE_DIR}/assimp-config.cmake.in"         "${CMAKE_CURRENT_BINARY_DIR}/assimp-config.cmake" @ONLY IMMEDIATE)
+CONFIGURE_FILE("${CMAKE_CURRENT_SOURCE_DIR}/assimpTargets.cmake.in"         "${CMAKE_CURRENT_BINARY_DIR}/assimpTargets.cmake" @ONLY IMMEDIATE)
+CONFIGURE_FILE("${CMAKE_CURRENT_SOURCE_DIR}/assimpTargets-debug.cmake.in"   "${CMAKE_CURRENT_BINARY_DIR}/assimpTargets-debug.cmake" @ONLY IMMEDIATE)
+CONFIGURE_FILE("${CMAKE_CURRENT_SOURCE_DIR}/assimpTargets-release.cmake.in" "${CMAKE_CURRENT_BINARY_DIR}/assimpTargets-release.cmake" @ONLY IMMEDIATE)
 CONFIGURE_FILE("${CMAKE_CURRENT_SOURCE_DIR}/assimp-config-version.cmake.in" "${CMAKE_CURRENT_BINARY_DIR}/assimp-config-version.cmake" @ONLY IMMEDIATE)
-INSTALL(FILES "${CMAKE_CURRENT_BINARY_DIR}/assimp-config.cmake"             "${CMAKE_CURRENT_BINARY_DIR}/assimp-config-version.cmake" DESTINATION "${ASSIMP_LIB_INSTALL_DIR}/cmake/assimp-${ASSIMP_VERSION_MAJOR}.${ASSIMP_VERSION_MINOR}" COMPONENT ${LIBASSIMP-DEV_COMPONENT})
+#we should generated these scripts after CMake VERSION 3.0.2 using export(EXPORT ...) and write_basic_package_version_file(...)
+INSTALL(FILES 
+  "${CMAKE_CURRENT_BINARY_DIR}/assimp-config.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/assimp-config-version.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/assimpTargets.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/assimpTargets-debug.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/assimpTargets-release.cmake"
+  DESTINATION "${ASSIMP_LIB_INSTALL_DIR}/cmake/assimp-${ASSIMP_VERSION_MAJOR}.${ASSIMP_VERSION_MINOR}" COMPONENT ${LIBASSIMP-DEV_COMPONENT})
 
 FIND_PACKAGE( DirectX )
 
@@ -315,11 +351,22 @@ IF( NOT ZLIB_FOUND )
   INCLUDE(CheckIncludeFile)
   INCLUDE(CheckTypeSize)
   INCLUDE(CheckFunctionExists)
+
+  # Explicitly turn off ASM686 and AMD64 cmake options.
+  # The AMD64 option causes a build failure on MSVC and the ASM builds seem to have problems:
+  #		https://github.com/madler/zlib/issues/41#issuecomment-125848075
+  # Also prevents these options from "polluting" the cmake options if assimp is being
+  # included as a submodule.
+  set( ASM686 FALSE CACHE INTERNAL "Override ZLIB flag to turn off assembly" FORCE )
+  set( AMD64 FALSE CACHE INTERNAL "Override ZLIB flag to turn off assembly" FORCE )
+
   # compile from sources
   ADD_SUBDIRECTORY(contrib/zlib)
   SET(ZLIB_FOUND 1)
   SET(ZLIB_LIBRARIES zlibstatic)
   SET(ZLIB_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/contrib/zlib ${CMAKE_CURRENT_BINARY_DIR}/contrib/zlib)
+  # need to ensure we don't link with system zlib or minizip as well.
+  SET(ASSIMP_BUILD_MINIZIP 1)
 ELSE(NOT ZLIB_FOUND)
   ADD_DEFINITIONS(-DASSIMP_BUILD_NO_OWN_ZLIB)
   SET(ZLIB_LIBRARIES_LINKED -lz)
@@ -327,7 +374,17 @@ ENDIF(NOT ZLIB_FOUND)
 INCLUDE_DIRECTORIES(${ZLIB_INCLUDE_DIR})
 
 # Search for unzip
-use_pkgconfig(UNZIP minizip)
+IF ( NOT IOS )
+  IF( NOT ASSIMP_BUILD_MINIZIP )
+	  use_pkgconfig(UNZIP minizip)
+  ENDIF( NOT ASSIMP_BUILD_MINIZIP )
+ELSE ( NOT IOS )
+	IF(NOT BUILD_SHARED_LIBS)
+    IF( NOT ASSIMP_BUILD_MINIZIP )
+		  use_pkgconfig(UNZIP minizip)
+    ENDIF( NOT ASSIMP_BUILD_MINIZIP )
+	ENDIF (NOT BUILD_SHARED_LIBS)
+ENDIF ( NOT IOS )
 
 IF ( ASSIMP_NO_EXPORT )
   ADD_DEFINITIONS( -DASSIMP_BUILD_NO_EXPORT)
@@ -412,7 +469,9 @@ IF ( ASSIMP_BUILD_ASSIMP_TOOLS )
   ENDIF ( WIN32 AND DirectX_D3DX9_LIBRARY )
 
   ADD_SUBDIRECTORY( tools/assimp_cmd/ )
+IF (NOT IOS)
   ADD_SUBDIRECTORY( tools/assimp_qt_viewer/ )
+ENDIF (NOT IOS)
 ENDIF ( ASSIMP_BUILD_ASSIMP_TOOLS )
 
 IF ( ASSIMP_BUILD_SAMPLES)
